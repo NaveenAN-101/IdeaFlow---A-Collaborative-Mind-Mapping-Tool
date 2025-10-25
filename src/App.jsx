@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Node from './components/Node';
+import socket from './socket';
 
 function App() {
   const [nodes, setNodes] = useState([]);
@@ -9,8 +10,10 @@ function App() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [startNode, setStartNode] = useState(null);
   const [deleteMode, setDeleteMode] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
 
   const addNode = () => {
+    if (!sessionId) return;
     const x = 200 + Math.random() * 400;
     const y = 200 + Math.random() * 300;
 
@@ -21,15 +24,18 @@ function App() {
       y,
     };
     setNodes((prev) => [...prev, newNode]);
+    socket.emit('add_node', { sessionId, node: newNode });
   };
 
   const deleteNode = (nodeId) => {
+    if (!sessionId) return;
     // Remove the node
     setNodes((prev) => prev.filter((node) => node.id !== nodeId));
     // Remove all connections involving this node
     setConnections((prev) => 
       prev.filter((conn) => conn.from !== nodeId && conn.to !== nodeId)
     );
+    socket.emit('delete_node', { sessionId, nodeId });
     // Exit connection mode if needed
     if (startNode === nodeId) {
       exitConnectionMode();
@@ -40,12 +46,22 @@ function App() {
     setNodes((prev) =>
       prev.map((node) => (node.id === id ? { ...node, x, y } : node))
     );
+    const node = nodes.find(n => n.id === id);
+    if (node && sessionId) {
+      const updated = { ...node, x, y };
+      socket.emit('update_node', { sessionId, node: updated });
+    }
   };
 
   const updateNodeText = (id, text) => {
     setNodes((prev) =>
       prev.map((node) => (node.id === id ? { ...node, text } : node))
     );
+    const node = nodes.find(n => n.id === id);
+    if (node && sessionId) {
+      const updated = { ...node, text };
+      socket.emit('update_node', { sessionId, node: updated });
+    }
   };
 
   const handleNodeClickForConnection = (nodeId) => {
@@ -63,10 +79,12 @@ function App() {
           (conn) => conn.from === startNode && conn.to === nodeId
         );
         if (!exists) {
+          const connection = { from: startNode, to: nodeId };
           setConnections((prev) => [
             ...prev,
-            { from: startNode, to: nodeId },
+            connection,
           ]);
+          if (sessionId) socket.emit('add_connection', { sessionId, connection });
         }
       }
       // Exit connection mode
@@ -82,6 +100,7 @@ function App() {
     setConnections((prev) => 
       prev.filter(conn => !(conn.from === fromId && conn.to === toId))
     );
+    if (sessionId) socket.emit('delete_connection', { sessionId, from: fromId, to: toId });
   };
 
   const exitConnectionMode = () => {
@@ -158,6 +177,62 @@ function App() {
       );
     });
   };
+
+  useEffect(() => {
+    // Session handling via URL ?s=ID
+    const params = new URLSearchParams(window.location.search);
+    const s = params.get('s');
+
+    if (s) {
+      setSessionId(s);
+      socket.emit('join_session', s);
+    } else {
+      socket.emit('create_session');
+    }
+
+    socket.on('session_created', ({ sessionId }) => {
+      setSessionId(sessionId);
+      const url = new URL(window.location.href);
+      url.searchParams.set('s', sessionId);
+      window.history.replaceState({}, '', url.toString());
+    });
+
+    socket.on('session_joined', ({ sessionId }) => setSessionId(sessionId));
+
+    socket.on('board_load', ({ nodes = [], connections = [] }) => {
+      setNodes(nodes);
+      setConnections(connections);
+    });
+
+    socket.on('add_node', ({ node }) => setNodes(prev => [...prev, node]));
+    socket.on('update_node', ({ node }) =>
+      setNodes(prev => prev.map(n => n.id === node.id ? node : n))
+    );
+    socket.on('delete_node', ({ nodeId }) => {
+      setNodes(prev => prev.filter(n => n.id !== nodeId));
+      setConnections(prev => prev.filter(c => c.from !== nodeId && c.to !== nodeId));
+    });
+
+    socket.on('add_connection', ({ connection }) =>
+      setConnections(prev => {
+        const exists = prev.some(c => c.from === connection.from && c.to === connection.to);
+        return exists ? prev : [...prev, connection];
+      })
+    );
+
+    socket.on('delete_connection', ({ from, to }) =>
+      setConnections(prev => prev.filter(c => !(c.from === from && c.to === to)))
+    );
+
+    socket.on('board_updated', (board) => {
+      setNodes(board.nodes || []);
+      setConnections(board.connections || []);
+    });
+
+    return () => {
+      socket.off();
+    };
+  }, []);
 
   return (
     <div>
