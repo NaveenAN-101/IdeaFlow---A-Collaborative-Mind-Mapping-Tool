@@ -1,154 +1,329 @@
-// components/Node.jsx
-import { useState } from 'react';
+import React, { useState, useRef, useEffect } from "react";
 
-export default function Node({ node, onDrag, onTextChange, onDotClick, isConnecting, isStartNode, deleteMode }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [text, setText] = useState(node.text);
+const Node = ({
+  id,
+  x,
+  y,
+  content,
+  color = "#007bff",
+  shape = "rectangle",
+  size = "medium",
+  borderStyle = "solid",
+  fontSize = "medium",
+  selected,
+  connecting,
+  onMove,
+  onEdit,
+  onSelect,
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(content);
+  const nodeRef = useRef(null);
+  const dragStateRef = useRef({
+    isDragging: false,
+    startX: 0,
+    startY: 0,
+    hasMoved: false,
+  });
+  const clickTimeoutRef = useRef(null);
+
+  useEffect(() => {
+    setText(content);
+  }, [content]);
+
+  // Size configurations
+  const sizes = {
+    small: { width: 120, height: 60 },
+    medium: { width: 150, height: 80 },
+    large: { width: 200, height: 100 },
+  };
+
+  const currentSize = sizes[size];
+
+  // Font size configurations
+  const fontSizes = {
+    small: "12px",
+    medium: "14px",
+    large: "18px",
+  };
+
+  // Get shape-specific styles
+  // Find and replace this function in Node.jsx
+
+  // Get shape-specific styles
+  const getShapeStyles = () => {
+    const borderWidth = selected ? "3px" : connecting ? "3px" : "2px";
+    const borderColor = selected ? "#000" : connecting ? "#FFD700" : "#fff";
+    const baseShadow = connecting
+      ? "0 0 20px rgba(255, 215, 0, 0.8)"
+      : selected
+      ? "0 6px 20px rgba(0,0,0,0.3)"
+      : "0 4px 12px rgba(0,0,0,0.15)";
+
+    const baseStyles = {
+      position: "absolute",
+      left: x,
+      top: y,
+      width: currentSize.width,
+      height: currentSize.height,
+      background: color,
+      color: "#fff",
+      fontWeight: "500",
+      fontSize: fontSizes[fontSize],
+      userSelect: "none",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      textAlign: "center",
+      cursor: dragStateRef.current.hasMoved ? "grabbing" : "grab",
+      transition: dragStateRef.current.isDragging ? "none" : "all 0.2s ease",
+      zIndex: dragStateRef.current.isDragging ? 1000 : selected ? 100 : 10,
+    };
+
+    switch (shape) {
+      case "circle":
+        const circleSize = Math.max(currentSize.width, currentSize.height);
+        return {
+          ...baseStyles,
+          width: circleSize,
+          height: circleSize,
+          borderRadius: "50%",
+          border: `${borderWidth} ${borderStyle} ${borderColor}`,
+          boxShadow: baseShadow,
+        };
+
+      case "diamond":
+        const diamondSize = Math.max(currentSize.width, currentSize.height);
+        const pulseScale = selected ? 1.08 : 1; // Apply scale on selection
+        return {
+          ...baseStyles,
+          width: diamondSize,
+          height: diamondSize,
+          borderRadius: "8px",
+          border: `${borderWidth} ${borderStyle} ${borderColor}`,
+          boxShadow: baseShadow,
+          transform: `rotate(45deg) scale(${pulseScale})`, // COMBINE transforms
+        };
+
+      case "hexagon":
+        return {
+          ...baseStyles,
+          clipPath: "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)",
+          border: "none",
+          filter: `drop-shadow(0 4px 8px rgba(0,0,0,0.2))`,
+        };
+
+      case "star":
+        const starSize = Math.max(currentSize.width, currentSize.height) * 1.2;
+        return {
+          ...baseStyles,
+          width: starSize,
+          height: starSize,
+          clipPath: "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)",
+          border: "none",
+          filter: `drop-shadow(0 4px 8px rgba(0,0,0,0.2))`,
+        };
+
+      case "cloud":
+        return {
+          ...baseStyles,
+          borderRadius: "100px",
+          border: `${borderWidth} ${borderStyle} ${borderColor}`,
+          boxShadow: baseShadow,
+          position: "relative",
+        };
+
+      case "rectangle":
+      default:
+        return {
+          ...baseStyles,
+          borderRadius: "12px",
+          border: `${borderWidth} ${borderStyle} ${borderColor}`,
+          boxShadow: baseShadow,
+        };
+    }
+  };
 
   const handleMouseDown = (e) => {
-    if (deleteMode) return; // Don't allow dragging in delete mode
-    if (e.button !== 0) return; // Left click only
-    e.preventDefault();
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const nodeStartX = node.x;
-    const nodeStartY = node.y;
+    if (editing) return;
+    if (e.button !== 0) return;
+    
+    e.stopPropagation();
 
-    const onMouseMove = (moveEvent) => {
-      const dx = moveEvent.clientX - startX;
-      const dy = moveEvent.clientY - startY;
-      onDrag(node.id, nodeStartX + dx, nodeStartY + dy);
+    dragStateRef.current = {
+      isDragging: true,
+      startX: e.clientX,
+      startY: e.clientY,
+      hasMoved: false,
     };
 
-    const onMouseUp = () => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
   };
 
-  const handleDoubleClick = () => {
-    if (!deleteMode) {
-      setIsEditing(true);
+  const handleMouseMove = (e) => {
+    if (!dragStateRef.current.isDragging) return;
+
+    const deltaX = e.clientX - dragStateRef.current.startX;
+    const deltaY = e.clientY - dragStateRef.current.startY;
+
+    if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+      dragStateRef.current.hasMoved = true;
+      onMove(id, deltaX, deltaY);
+      dragStateRef.current.startX = e.clientX;
+      dragStateRef.current.startY = e.clientY;
     }
   };
 
-  const handleChange = (e) => {
-    setText(e.target.value);
+  const handleMouseUp = (e) => {
+    const wasDragging = dragStateRef.current.hasMoved;
+
+    dragStateRef.current.isDragging = false;
+    dragStateRef.current.hasMoved = false;
+
+    document.removeEventListener("mousemove", handleMouseMove);
+    document.removeEventListener("mouseup", handleMouseUp);
+
+    if (!wasDragging) {
+      handleClick(e);
+    }
   };
+
+  const handleClick = (e) => {
+    e.stopPropagation();
+
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+    }
+
+    clickTimeoutRef.current = setTimeout(() => {
+      onSelect(id, e);
+    }, 200);
+  };
+
+  const handleDoubleClick = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+
+    setEditing(true);
+  };
+
+  useEffect(() => {
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleBlur = () => {
-    if (text.trim() === '') {
-      setText(node.text); // Revert if empty
+    setEditing(false);
+    if (text.trim() !== content) {
+      onEdit(id, text.trim() || "Empty");
     }
-    setIsEditing(false);
-    onTextChange(node.id, text);
   };
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') {
-      e.target.blur();
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleBlur();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setText(content);
+      setEditing(false);
     }
   };
 
+  const isCloud = shape === "cloud";
+
   return (
     <div
-      style={{
-        position: 'absolute',
-        top: node.y,
-        left: node.x,
-        padding: '10px 14px',
-        background: deleteMode ? '#fee2e2' : '#ffffff', // Red background in delete mode
-        color: deleteMode ? '#dc2626' : '#1a1a1a', // Red text in delete mode
-        border: `2px solid ${isStartNode ? '#ec4899' : deleteMode ? '#ef4444' : '#4a90e2'}`,
-        borderRadius: '8px',
-        fontWeight: 500,
-        fontSize: '14px',
-        minWidth: '100px',
-        maxWidth: '160px',
-        textAlign: 'center',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-        cursor: deleteMode ? 'pointer' : 'move',
-        userSelect: 'none',
-        zIndex: 2,
-        // Highlight start node during connection
-        ...(isStartNode && {
-          boxShadow: '0 0 15px rgba(236, 72, 153, 0.5)'
-        })
-      }}
+      ref={nodeRef}
+      className={`node ${selected ? "selected" : ""} ${connecting ? "connecting" : ""}`}
+      style={getShapeStyles()}
       onMouseDown={handleMouseDown}
       onDoubleClick={handleDoubleClick}
-      onClick={(e) => {
-        if (deleteMode) {
-          e.stopPropagation();
-          onDotClick(node.id); // This will delete the node
-        }
-      }}
     >
-      {isEditing ? (
-        <input
-          type="text"
-          value={text}
-          onChange={handleChange}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-          autoFocus
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            width: '100%',
-            padding: '2px 0',
-            fontSize: '14px',
-            border: '1px solid #aaa',
-            borderRadius: '4px',
-            outline: '2px solid #4a90e2',
-            textAlign: 'center',
-            boxSizing: 'border-box',
-          }}
-        />
-      ) : (
-        <span>{text}</span>
+      {/* Cloud bubbles effect */}
+      {isCloud && (
+        <>
+          <div
+            style={{
+              position: "absolute",
+              width: "60%",
+              height: "60%",
+              background: color,
+              borderRadius: "50%",
+              top: "-25%",
+              left: "10%",
+              zIndex: -1
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              width: "50%",
+              height: "50%",
+              background: color,
+              borderRadius: "50%",
+              top: "-20%",
+              right: "15%",
+              zIndex: -1
+            }}
+          />
+        </>
       )}
 
-      {/* Connection Trigger Dot */}
       <div
         style={{
-          position: 'absolute',
-          top: '50%',
-          right: '-8px',
-          width: '12px',
-          height: '12px',
-          backgroundColor: isStartNode 
-            ? '#ec4899' // Red for start node
-            : isConnecting 
-              ? '#fbbf24' // Yellow for other nodes during connection
-              : deleteMode
-                ? '#ef4444' // Red in delete mode
-                : '#4a90e2', // Blue normal state
-          borderRadius: '50%',
-          transform: 'translateY(-50%)',
-          cursor: 'pointer',
-          border: '2px solid white',
-          boxShadow: '0 0 6px rgba(0,0,0,0.3)',
-          transition: 'background-color 0.2s ease, transform 0.1s ease',
+          transform: shape === "diamond" ? "rotate(-45deg)" : "none",
+          width: "100%",
+          height: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "10px",
+          zIndex: 1,
+          position: "relative",
         }}
-        onClick={(e) => {
-          e.stopPropagation(); // Prevent drag
-          onDotClick(node.id);
-        }}
-        title={deleteMode 
-          ? "Click to delete node" 
-          : isConnecting 
-            ? "Click to connect" 
-            : "Click to start connection"
-        }
-        onMouseDown={(e) => {
-          if (!deleteMode) {
-            e.stopPropagation(); // Prevent drag initiation
-          }
-        }}
-      />
+      >
+        {editing ? (
+          <input
+            type="text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={handleBlur}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            style={{
+              background: "rgba(255, 255, 255, 0.2)",
+              border: "1px solid rgba(255, 255, 255, 0.5)",
+              borderRadius: "4px",
+              color: "#fff",
+              fontSize: fontSizes[fontSize],
+              outline: "none",
+              width: "90%",
+              padding: "4px 8px",
+              textAlign: "center",
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span style={{ pointerEvents: "none", wordBreak: "break-word" }}>
+            {content}
+          </span>
+        )}
+      </div>
     </div>
   );
-}
+};
+
+export default Node;

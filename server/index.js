@@ -1,96 +1,131 @@
- const express = require('express');
-const { createServer } = require('http');
-const { Server } = require('socket.io');
-const cors = require('cors');
+import express from "express";
+import http from "http";
+import { Server } from "socket.io";
+import cors from "cors";
+import mongoose from "mongoose";
 
 const app = express();
-app.use(cors());
-
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
+const server = http.createServer(app);
+const io = new Server(server, {
   cors: {
-    origin: '*',
+    origin: "*",
+    methods: ["GET", "POST"],
   },
 });
 
-let sessions = {}; // { [sessionId]: { nodes: [], connections: [] } }
+app.use(cors());
+app.use(express.json());
 
-io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+// MongoDB Connection (Optional - uncomment when ready)
+// mongoose.connect('mongodb://localhost:27017/ideaflow', {
+//   useNewUrlParser: true,
+//   useUnifiedTopology: true
+// });
 
-  // Create a new collaborative session
-  socket.on('create_session', () => {
-    const sessionId = Math.random().toString(36).slice(2, 10);
-    sessions[sessionId] = { nodes: [], connections: [] };
-    socket.join(sessionId);
-    socket.emit('session_created', { sessionId });
-    socket.emit('board_load', sessions[sessionId]);
-  });
+// Session Schema (for persistence)
+const sessionSchema = new mongoose.Schema({
+  sessionId: { type: String, unique: true, required: true },
+  nodes: { type: Array, default: [] },
+  connections: { type: Array, default: [] },
+  lastUpdated: { type: Date, default: Date.now },
+});
 
-  // Join an existing session
-  socket.on('join_session', (sessionId) => {
-    if (!sessions[sessionId]) {
-      socket.emit('error_message', 'Invalid session ID');
-      return;
+const Session = mongoose.model("Session", sessionSchema);
+
+// In-memory storage (if DB not connected)
+let sessions = {};
+
+// REST API: Get session data
+app.get("/api/session/:id", async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Try MongoDB first
+    if (mongoose.connection.readyState === 1) {
+      let session = await Session.findOne({ sessionId: id });
+      if (!session) {
+        session = new Session({ sessionId: id, nodes: [], connections: [] });
+        await session.save();
+      }
+      return res.json(session);
     }
+    
+    // Fallback to in-memory
+    if (!sessions[id]) {
+      sessions[id] = { nodes: [], connections: [] };
+    }
+    res.json({ sessionId: id, ...sessions[id] });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch session" });
+  }
+});
+
+// REST API: Save session data
+app.post("/api/session/:id", async (req, res) => {
+  const { id } = req.params;
+  const { nodes, connections } = req.body;
+
+  try {
+    if (mongoose.connection.readyState === 1) {
+      await Session.findOneAndUpdate(
+        { sessionId: id },
+        { nodes, connections, lastUpdated: Date.now() },
+        { upsert: true, new: true }
+      );
+    } else {
+      sessions[id] = { nodes, connections };
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to save session" });
+  }
+});
+
+// WebSocket events
+io.on("connection", (socket) => {
+  console.log("🔗 User connected:", socket.id);
+
+  socket.on("join-session", async (sessionId) => {
     socket.join(sessionId);
-    socket.emit('session_joined', { sessionId });
-    socket.emit('board_load', sessions[sessionId]);
-  });
-
-  // Node CRUD
-  socket.on('add_node', ({ sessionId, node }) => {
-    const s = sessions[sessionId];
-    if (!s) return;
-    s.nodes.push(node);
-    socket.to(sessionId).emit('add_node', { node });
-  });
-
-  socket.on('update_node', ({ sessionId, node }) => {
-    const s = sessions[sessionId];
-    if (!s) return;
-    s.nodes = s.nodes.map(n => n.id === node.id ? node : n);
-    socket.to(sessionId).emit('update_node', { node });
-  });
-
-  socket.on('delete_node', ({ sessionId, nodeId }) => {
-    const s = sessions[sessionId];
-    if (!s) return;
-    s.nodes = s.nodes.filter(n => n.id !== nodeId);
-    s.connections = s.connections.filter(c => c.from !== nodeId && c.to !== nodeId);
-    io.to(sessionId).emit('delete_node', { nodeId });
-  });
-
-  // Connections
-  socket.on('add_connection', ({ sessionId, connection }) => {
-    const s = sessions[sessionId];
-    if (!s) return;
-    const exists = s.connections.some(c => c.from === connection.from && c.to === connection.to);
-    if (!exists) {
-      s.connections.push(connection);
-      socket.to(sessionId).emit('add_connection', { connection });
+    console.log(`User ${socket.id} joined session: ${sessionId}`);
+    
+    // Send current session state
+    let sessionData;
+    if (mongoose.connection.readyState === 1) {
+      sessionData = await Session.findOne({ sessionId });
+    } else {
+      sessionData = sessions[sessionId];
+    }
+    
+    if (sessionData) {
+      socket.emit("session-data", sessionData);
     }
   });
 
-  socket.on('delete_connection', ({ sessionId, from, to }) => {
-    const s = sessions[sessionId];
-    if (!s) return;
-    s.connections = s.connections.filter(c => !(c.from === from && c.to === to));
-    io.to(sessionId).emit('delete_connection', { from, to });
+  socket.on("update-board", async (data) => {
+    const { sessionId, nodes, connections } = data;
+    
+    // Update storage
+    if (mongoose.connection.readyState === 1) {
+      await Session.findOneAndUpdate(
+        { sessionId },
+        { nodes, connections, lastUpdated: Date.now() },
+        { upsert: true }
+      );
+    } else {
+      sessions[sessionId] = { nodes, connections };
+    }
+    
+    // Broadcast to others in the session
+    socket.to(sessionId).emit("board-updated", { nodes, connections });
   });
 
-  // Replace entire board (sync)
-  socket.on('update_board', ({ sessionId, board }) => {
-    const s = sessions[sessionId];
-    if (!s) return;
-    sessions[sessionId] = board;
-    socket.to(sessionId).emit('board_updated', board);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+  socket.on("disconnect", () => {
+    console.log("❌ User disconnected:", socket.id);
   });
 });
 
-httpServer.listen(3001, () => console.log('✅ Server running at http://localhost:3001'));
+app.get("/", (req, res) => res.send("✅ IdeaFlow Server Running"));
 
+const PORT = process.env.PORT || 4000;
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));

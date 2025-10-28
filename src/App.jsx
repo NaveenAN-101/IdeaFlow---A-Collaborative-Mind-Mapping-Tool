@@ -1,362 +1,552 @@
-// App.jsx
-import { useState, useEffect } from 'react';
-import { v4 as uuidv4 } from 'uuid';
-import Node from './components/Node';
-import socket from './socket';
+import React, { useEffect, useState, useRef } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import Node from "./components/Node";
+import Connection from "./components/Connection";
+import Toolbar from "./components/Toolbar";
+import StylePanel from "./components/StylePanel";
+import socket from "./socket";
+import "./App.css";
 
 function App() {
+  const { sessionId } = useParams();
+  const navigate = useNavigate();
   const [nodes, setNodes] = useState([]);
   const [connections, setConnections] = useState([]);
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [startNode, setStartNode] = useState(null);
-  const [deleteMode, setDeleteMode] = useState(false);
-  const [sessionId, setSessionId] = useState(null);
+  const [selectedNode, setSelectedNode] = useState(null);
+  const [selectedConnection, setSelectedConnection] = useState(null);
+  const [connectingFrom, setConnectingFrom] = useState(null);
+  const [stylePanelNode, setStylePanelNode] = useState(null);
+  
+  // Pan/Zoom state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  
+  const boardRef = useRef(null);
+  const canvasRef = useRef(null);
+  const currentSessionId = sessionId || "default-session";
 
-  const addNode = () => {
-    if (!sessionId) return;
-    const x = 200 + Math.random() * 400;
-    const y = 200 + Math.random() * 300;
+  // Generate unique session ID
+  const createNewSession = () => {
+    const newId = Math.random().toString(36).substr(2, 9);
+    navigate(`/session/${newId}`);
+  };
 
-    const newNode = {
-      id: uuidv4(),
-      text: 'New Idea',
-      x,
-      y,
+  // ESC key handler
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setSelectedNode(null);
+        setSelectedConnection(null);
+        setConnectingFrom(null);
+        setIsPanning(false);
+        setStylePanelNode(null);
+      }
     };
-    setNodes((prev) => [...prev, newNode]);
-    socket.emit('add_node', { sessionId, node: newNode });
-  };
 
-  const deleteNode = (nodeId) => {
-    if (!sessionId) return;
-    // Remove the node
-    setNodes((prev) => prev.filter((node) => node.id !== nodeId));
-    // Remove all connections involving this node
-    setConnections((prev) => 
-      prev.filter((conn) => conn.from !== nodeId && conn.to !== nodeId)
-    );
-    socket.emit('delete_node', { sessionId, nodeId });
-    // Exit connection mode if needed
-    if (startNode === nodeId) {
-      exitConnectionMode();
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Zoom with mouse wheel
+  useEffect(() => {
+    const handleWheel = (e) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        const newZoom = Math.min(Math.max(zoom * delta, 0.1), 3);
+        
+        setZoom(newZoom);
+      }
+    };
+
+    const board = boardRef.current;
+    if (board) {
+      board.addEventListener('wheel', handleWheel, { passive: false });
+    }
+
+    return () => {
+      if (board) {
+        board.removeEventListener('wheel', handleWheel);
+      }
+    };
+  }, [zoom]);
+
+  // Pan handlers
+  const handleMouseDown = (e) => {
+    if (e.target === canvasRef.current || e.target === boardRef.current) {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
     }
   };
 
-  const updateNodePosition = (id, x, y) => {
-    setNodes((prev) =>
-      prev.map((node) => (node.id === id ? { ...node, x, y } : node))
-    );
-    const node = nodes.find(n => n.id === id);
-    if (node && sessionId) {
-      const updated = { ...node, x, y };
-      socket.emit('update_node', { sessionId, node: updated });
+  const handleMouseMove = (e) => {
+    if (isPanning) {
+      setPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y
+      });
     }
   };
 
-  const updateNodeText = (id, text) => {
-    setNodes((prev) =>
-      prev.map((node) => (node.id === id ? { ...node, text } : node))
-    );
-    const node = nodes.find(n => n.id === id);
-    if (node && sessionId) {
-      const updated = { ...node, text };
-      socket.emit('update_node', { sessionId, node: updated });
-    }
+  const handleMouseUp = () => {
+    setIsPanning(false);
   };
 
-  const handleNodeClickForConnection = (nodeId) => {
-    if (deleteMode) {
-      // Delete mode: delete the node
-      deleteNode(nodeId);
+  // Reset view
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Zoom in/out buttons
+  const zoomIn = () => setZoom(Math.min(zoom * 1.2, 3));
+  const zoomOut = () => setZoom(Math.max(zoom * 0.8, 0.1));
+
+  // Load session data on mount
+  useEffect(() => {
+    if (!sessionId) {
+      createNewSession();
       return;
     }
-    
-    if (isConnecting) {
-      // If we're already connecting, connect to this node
-      if (startNode && startNode !== nodeId) {
-        // Prevent duplicate connections
-        const exists = connections.some(
-          (conn) => conn.from === startNode && conn.to === nodeId
-        );
-        if (!exists) {
-          const connection = { from: startNode, to: nodeId };
-          setConnections((prev) => [
-            ...prev,
-            connection,
-          ]);
-          if (sessionId) socket.emit('add_connection', { sessionId, connection });
-        }
-      }
-      // Exit connection mode
-      exitConnectionMode();
-    } else {
-      // Start connection mode
-      setStartNode(nodeId);
-      setIsConnecting(true);
-    }
-  };
 
-  const deleteConnection = (fromId, toId) => {
-    setConnections((prev) => 
-      prev.filter(conn => !(conn.from === fromId && conn.to === toId))
-    );
-    if (sessionId) socket.emit('delete_connection', { sessionId, from: fromId, to: toId });
-  };
+    socket.emit("join-session", currentSessionId);
 
-  const exitConnectionMode = () => {
-    setIsConnecting(false);
-    setStartNode(null);
-  };
-
-  const toggleDeleteMode = () => {
-    setDeleteMode(!deleteMode);
-    exitConnectionMode(); // Exit connection mode if active
-  };
-
-  // Exit connection mode when clicking on empty space
-  const handleCanvasClick = () => {
-    if (isConnecting) {
-      exitConnectionMode();
-    }
-  };
-
-  const renderConnections = () => {
-    return connections.map((conn, index) => {
-      const fromNode = nodes.find((n) => n.id === conn.from);
-      const toNode = nodes.find((n) => n.id === conn.to);
-      if (!fromNode || !toNode) return null;
-
-      // Calculate center points of nodes
-      const fromX = fromNode.x + 80;
-      const fromY = fromNode.y + 30;
-      const toX = toNode.x + 80;
-      const toY = toNode.y + 30;
-
-      // Bezier curve control points
-      const dx = (toX - fromX) * 0.6;
-
-      const pathData = `
-        M ${fromX} ${fromY}
-        C ${fromX + dx} ${fromY},
-          ${toX - dx} ${toY},
-          ${toX} ${toY}
-      `;
-
-      return (
-        <g key={index}>
-          <path
-            d={pathData}
-            fill="none"
-            stroke="#9ca3af"
-            strokeWidth="2"
-            markerEnd="url(#arrowhead)"
-            style={{ pointerEvents: 'stroke', cursor: deleteMode ? 'pointer' : 'default' }}
-            onClick={(e) => {
-              if (deleteMode) {
-                e.stopPropagation();
-                deleteConnection(conn.from, conn.to);
-              }
-            }}
-          />
-          {deleteMode && (
-            <circle
-              cx={(fromX + toX) / 2}
-              cy={(fromY + toY) / 2}
-              r="8"
-              fill="#ef4444"
-              stroke="white"
-              strokeWidth="2"
-              cursor="pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteConnection(conn.from, conn.to);
-              }}
-            />
-          )}
-        </g>
-      );
-    });
-  };
-
-  useEffect(() => {
-    // Session handling via URL ?s=ID
-    const params = new URLSearchParams(window.location.search);
-    const s = params.get('s');
-
-    if (s) {
-      setSessionId(s);
-      socket.emit('join_session', s);
-    } else {
-      socket.emit('create_session');
-    }
-
-    socket.on('session_created', ({ sessionId }) => {
-      setSessionId(sessionId);
-      const url = new URL(window.location.href);
-      url.searchParams.set('s', sessionId);
-      window.history.replaceState({}, '', url.toString());
-    });
-
-    socket.on('session_joined', ({ sessionId }) => setSessionId(sessionId));
-
-    socket.on('board_load', ({ nodes = [], connections = [] }) => {
-      setNodes(nodes);
-      setConnections(connections);
-    });
-
-    socket.on('add_node', ({ node }) => setNodes(prev => [...prev, node]));
-    socket.on('update_node', ({ node }) =>
-      setNodes(prev => prev.map(n => n.id === node.id ? node : n))
-    );
-    socket.on('delete_node', ({ nodeId }) => {
-      setNodes(prev => prev.filter(n => n.id !== nodeId));
-      setConnections(prev => prev.filter(c => c.from !== nodeId && c.to !== nodeId));
-    });
-
-    socket.on('add_connection', ({ connection }) =>
-      setConnections(prev => {
-        const exists = prev.some(c => c.from === connection.from && c.to === connection.to);
-        return exists ? prev : [...prev, connection];
+    fetch(`http://localhost:4000/api/session/${currentSessionId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setNodes(data.nodes || []);
+        setConnections(data.connections || []);
       })
-    );
+      .catch((err) => console.error("Error loading session:", err));
 
-    socket.on('delete_connection', ({ from, to }) =>
-      setConnections(prev => prev.filter(c => !(c.from === from && c.to === to)))
-    );
+    socket.on("session-data", (data) => {
+      setNodes(data.nodes || []);
+      setConnections(data.connections || []);
+    });
 
-    socket.on('board_updated', (board) => {
-      setNodes(board.nodes || []);
-      setConnections(board.connections || []);
+    socket.on("board-updated", (data) => {
+      setNodes(data.nodes || []);
+      setConnections(data.connections || []);
     });
 
     return () => {
-      socket.off();
+      socket.off("session-data");
+      socket.off("board-updated");
     };
-  }, []);
+  }, [sessionId]);
+
+  // Sync changes to server (debounced)
+  const syncTimeoutRef = useRef(null);
+  const syncToServer = (updatedNodes, updatedConnections) => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    syncTimeoutRef.current = setTimeout(() => {
+      socket.emit("update-board", {
+        sessionId: currentSessionId,
+        nodes: updatedNodes,
+        connections: updatedConnections,
+      });
+    }, 50);
+  };
+
+  // Add new node with all properties
+  const addNode = () => {
+    const newNode = {
+      id: `node-${Date.now()}`,
+      x: 100 + Math.random() * 300,
+      y: 100 + Math.random() * 200,
+      content: "New Idea",
+      color: "#007bff",
+      shape: "rectangle",
+      size: "medium",
+      borderStyle: "solid",
+      fontSize: "medium",
+    };
+    const updated = [...nodes, newNode];
+    setNodes(updated);
+    syncToServer(updated, connections);
+  };
+
+  // Delete node
+  const deleteNode = (id) => {
+    const updatedNodes = nodes.filter((n) => n.id !== id);
+    const updatedConnections = connections.filter(
+      (c) => c.from !== id && c.to !== id
+    );
+    setNodes(updatedNodes);
+    setConnections(updatedConnections);
+    syncToServer(updatedNodes, updatedConnections);
+    setSelectedNode(null);
+  };
+
+  // Edit node content
+  const editNode = (id, newContent) => {
+    const updated = nodes.map((n) =>
+      n.id === id ? { ...n, content: newContent } : n
+    );
+    setNodes(updated);
+    syncToServer(updated, connections);
+  };
+
+  // Handle style panel updates
+  const handleStyleUpdate = (nodeId, property, value) => {
+    if (property === "delete") {
+      deleteNode(nodeId);
+      return;
+    }
+
+    const updated = nodes.map((n) =>
+      n.id === nodeId ? { ...n, [property]: value } : n
+    );
+    setNodes(updated);
+    syncToServer(updated, connections);
+    
+    // Update panel preview
+    const updatedNode = updated.find((n) => n.id === nodeId);
+    if (updatedNode) {
+      setStylePanelNode(updatedNode);
+    }
+  };
+
+  // Move node
+  const moveNode = (id, deltaX, deltaY) => {
+    setNodes((prevNodes) => {
+      const updated = prevNodes.map((n) =>
+        n.id === id ? { ...n, x: n.x + deltaX / zoom, y: n.y + deltaY / zoom } : n
+      );
+      syncToServer(updated, connections);
+      return updated;
+    });
+  };
+
+  // Create connection
+  const createConnection = (fromId, toId) => {
+    if (fromId === toId) {
+      alert("Cannot connect a node to itself!");
+      setConnectingFrom(null);
+      return;
+    }
+
+    const exists = connections.find(
+      (c) =>
+        (c.from === fromId && c.to === toId) ||
+        (c.from === toId && c.to === fromId)
+    );
+
+    if (exists) {
+      alert("Connection already exists!");
+      setConnectingFrom(null);
+      return;
+    }
+
+    const newConnection = { 
+      id: `conn-${Date.now()}`, 
+      from: fromId, 
+      to: toId,
+      labels: []
+    };
+    const updated = [...connections, newConnection];
+    setConnections(updated);
+    syncToServer(nodes, updated);
+    setConnectingFrom(null);
+  };
+
+  // Delete connection
+  const deleteConnection = (id) => {
+    const updated = connections.filter((c) => c.id !== id);
+    setConnections(updated);
+    syncToServer(nodes, updated);
+    setSelectedConnection(null);
+  };
+
+  // Add label to connection
+  const addConnectionLabel = (connectionId) => {
+    const updated = connections.map((c) =>
+      c.id === connectionId
+        ? {
+            ...c,
+            labels: [
+              ...(c.labels || []),
+              {
+                id: `label-${Date.now()}`,
+                text: "",
+                offsetX: 0,
+                offsetY: (c.labels?.length || 0) * 30,
+              },
+            ],
+          }
+        : c
+    );
+    setConnections(updated);
+    syncToServer(nodes, updated);
+  };
+
+  // Update specific label text
+  const updateConnectionLabel = (connectionId, labelId, newText) => {
+    const updated = connections.map((c) =>
+      c.id === connectionId
+        ? {
+            ...c,
+            labels: c.labels.map((label) =>
+              label.id === labelId ? { ...label, text: newText } : label
+            ),
+          }
+        : c
+    );
+    setConnections(updated);
+    syncToServer(nodes, updated);
+  };
+
+  // Update label position (for dragging)
+  const updateLabelPosition = (connectionId, labelId, offsetX, offsetY) => {
+    const updated = connections.map((c) =>
+      c.id === connectionId
+        ? {
+            ...c,
+            labels: c.labels.map((label) =>
+              label.id === labelId ? { ...label, offsetX, offsetY } : label
+            ),
+          }
+        : c
+    );
+    setConnections(updated);
+    syncToServer(nodes, updated);
+  };
+
+  // Delete specific label
+  const deleteConnectionLabel = (connectionId, labelId) => {
+    const updated = connections.map((c) =>
+      c.id === connectionId
+        ? {
+            ...c,
+            labels: c.labels.filter((label) => label.id !== labelId),
+          }
+        : c
+    );
+    setConnections(updated);
+    syncToServer(nodes, updated);
+  };
+
+  // Handle connection click
+  const handleConnectionClick = (connectionId) => {
+    setSelectedConnection(connectionId);
+    setSelectedNode(null);
+  };
+
+  // Handle node selection
+  const handleNodeSelect = (nodeId, event) => {
+    event.stopPropagation();
+
+    if (connectingFrom) {
+      createConnection(connectingFrom, nodeId);
+    } else {
+      setSelectedNode(nodeId);
+      setSelectedConnection(null);
+      // Open style panel
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node) {
+        setStylePanelNode(node);
+      }
+    }
+  };
+
+  // Handle board click (deselect)
+  const handleBoardClick = () => {
+    if (!isPanning) {
+      setSelectedNode(null);
+      setSelectedConnection(null);
+      if (connectingFrom) {
+        setConnectingFrom(null);
+      }
+    }
+  };
+
+  // Start connection mode from selected node
+  const startConnectionMode = () => {
+    if (!selectedNode) {
+      alert("Please click a node to select it first, then click Connect!");
+      return;
+    }
+
+    setConnectingFrom(selectedNode);
+  };
+
+  // Export as JSON
+  const exportJSON = () => {
+    const data = { nodes, connections };
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ideaflow-${currentSessionId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Export as Image
+  const exportImage = async () => {
+    try {
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(boardRef.current, {
+        backgroundColor: "#f8f9fa",
+        scale: 2,
+      });
+      const url = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ideaflow-${currentSessionId}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Export failed:", error);
+      alert("Failed to export image. Make sure html2canvas is installed.");
+    }
+  };
 
   return (
-    <div>
-      <button
-        onClick={addNode}
-        style={{
-          margin: '10px',
-          padding: '8px 16px',
-          fontSize: '14px',
-          backgroundColor: '#4a90e2',
-          color: 'white',
-          border: 'none',
-          borderRadius: '6px',
-          cursor: 'pointer',
-          fontWeight: 500,
-        }}
+    <div className="App">
+      <Toolbar
+        onAddNode={addNode}
+        onExportJSON={exportJSON}
+        onExportImage={exportImage}
+        onToggleConnect={startConnectionMode}
+        connectMode={!!connectingFrom}
+        sessionId={currentSessionId}
+        onNewSession={createNewSession}
+        zoom={zoom}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onResetView={resetView}
+      />
+
+      <div 
+        className="board" 
+        ref={boardRef} 
+        onClick={handleBoardClick}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        style={{ cursor: isPanning ? 'grabbing' : 'default' }}
       >
-        ➕ Add Node
-      </button>
-
-      <button
-        onClick={toggleDeleteMode}
-        style={{
-          margin: '10px',
-          padding: '8px 16px',
-          fontSize: '14px',
-          backgroundColor: deleteMode ? '#ef4444' : '#6b7280',
-          color: 'white',
-          border: 'none',
-          borderRadius: '6px',
-          cursor: 'pointer',
-          fontWeight: 500,
-        }}
-      >
-        {deleteMode ? '❌ Delete Mode ON' : '🗑️ Delete Mode'}
-      </button>
-
-      {/* Connection Status Indicator */}
-      {isConnecting && (
-        <span style={{
-          marginLeft: '10px',
-          fontSize: '14px',
-          color: '#ec4899',
-          fontWeight: 'bold'
-        }}>
-          🔗 Connecting from node {startNode?.slice(0, 5)}... Click another node's dot
-        </span>
-      )}
-
-      {deleteMode && (
-        <span style={{
-          marginLeft: '10px',
-          fontSize: '14px',
-          color: '#ef4444',
-          fontWeight: 'bold'
-        }}>
-          🗑️ Delete Mode: Click nodes or connections to delete
-        </span>
-      )}
-
-      <div
-        style={{
-          position: 'relative',
-          width: '100vw',
-          height: '90vh',
-          backgroundColor: '#1e1e2e',
-          overflow: 'hidden',
-          touchAction: 'none',
-          backgroundImage: `
-            linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px)
-          `,
-          backgroundSize: '20px 20px',
-        }}
-        onClick={handleCanvasClick}
-      >
-        {/* SVG Layer for Connections */}
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
+        {/* Canvas with pan/zoom transform */}
+        <div
+          ref={canvasRef}
+          className="canvas"
           style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            zIndex: 1,
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: '0 0',
           }}
         >
-          <defs>
-            {/* Reliable Arrowhead Marker */}
-            <marker
-              id="arrowhead"
-              viewBox="0 0 10 10"
-              refX="9"
-              refY="5"
-              markerWidth="6"
-              markerHeight="6"
-              orient="auto-start-reverse"
-              fill="#9ca3af"
-            >
-              <path d="M 0 0 L 10 5 L 0 10 Z" />
-            </marker>
-          </defs>
-          {renderConnections()}
-        </svg>
+          {/* SVG for connections */}
+          <svg className="connections-layer">
+            {connections.map((conn) => {
+              const fromNode = nodes.find((n) => n.id === conn.from);
+              const toNode = nodes.find((n) => n.id === conn.to);
+              if (!fromNode || !toNode) return null;
 
-        {/* Nodes Layer */}
-        {nodes.map((node) => (
-          <div
-            key={node.id}
-            style={{ position: 'absolute', zIndex: 2 }}
-          >
+              const fromX = fromNode.x + 75;
+              const fromY = fromNode.y + 40;
+              const toX = toNode.x + 75;
+              const toY = toNode.y + 40;
+
+              return (
+                <Connection
+                  key={conn.id}
+                  id={conn.id}
+                  from={{ x: fromX, y: fromY }}
+                  to={{ x: toX, y: toY }}
+                  labels={conn.labels || []}
+                  selected={selectedConnection === conn.id}
+                  onClick={handleConnectionClick}
+                  onDelete={deleteConnection}
+                  onAddLabel={addConnectionLabel}
+                  onUpdateLabel={updateConnectionLabel}
+                  onUpdateLabelPosition={updateLabelPosition}
+                  onDeleteLabel={deleteConnectionLabel}
+                />
+              );
+            })}
+          </svg>
+
+          {/* Render nodes */}
+          {nodes.map((node) => (
             <Node
-              node={node}
-              onDrag={updateNodePosition}
-              onTextChange={updateNodeText}
-              onDotClick={handleNodeClickForConnection}
-              isConnecting={isConnecting}
-              isStartNode={isConnecting && startNode === node.id}
-              deleteMode={deleteMode}
+              key={node.id}
+              {...node}
+              selected={selectedNode === node.id}
+              connecting={connectingFrom === node.id}
+              onMove={moveNode}
+              onEdit={editNode}
+              onSelect={handleNodeSelect}
             />
+          ))}
+        </div>
+
+        {/* Zoom controls overlay */}
+        <div className="zoom-controls">
+          <button onClick={zoomIn} title="Zoom In">➕</button>
+          <div className="zoom-display">{Math.round(zoom * 100)}%</div>
+          <button onClick={zoomOut} title="Zoom Out">➖</button>
+          <button onClick={resetView} title="Reset View">⟲</button>
+        </div>
+
+        {/* Connection hint */}
+        {connectingFrom && (
+          <div className="connect-hint">
+            🔗 Click another node to create a connection
+            <br />
+            <small>Press ESC or click the board to cancel</small>
           </div>
-        ))}
+        )}
+
+        {/* Selection hint */}
+        {selectedNode && !connectingFrom && !stylePanelNode && (
+          <div className="selection-hint">
+            ✨ Node selected! Double-click to edit text
+            <br />
+            <small>Style panel opened • Press ESC to close</small>
+          </div>
+        )}
+
+        {/* Connection selection hint */}
+        {selectedConnection && (
+          <div className="selection-hint">
+            🔗 Connection selected! Click ➕ to add labels
+            <br />
+            <small>Double-click labels to edit • Drag to move • Click ✕ to delete</small>
+          </div>
+        )}
+
+        {/* Welcome hint */}
+        {nodes.length === 0 && (
+          <div className="welcome-hint">
+            <h2>👋 Welcome to IdeaFlow!</h2>
+            <p>Click "Add Node" to start your mind map</p>
+            <div className="quick-tips">
+              <div className="tip">🖱️ Drag to move nodes</div>
+              <div className="tip">🎯 Click to select & customize</div>
+              <div className="tip">✏️ Double-click to edit</div>
+              <div className="tip">🔗 Select → Connect → Click target</div>
+              <div className="tip">🔍 Ctrl+Scroll to zoom</div>
+              <div className="tip">✋ Drag background to pan</div>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Style Panel */}
+      <StylePanel
+        node={stylePanelNode}
+        onClose={() => setStylePanelNode(null)}
+        onUpdate={handleStyleUpdate}
+      />
     </div>
   );
 }
