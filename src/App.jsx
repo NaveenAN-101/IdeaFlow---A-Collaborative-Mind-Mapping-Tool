@@ -7,6 +7,11 @@ import StylePanel from "./components/StylePanel";
 import socket from "./socket";
 import "./App.css";
 
+// This will use your deployed URL in production, and localhost in development
+const API_URL = import.meta.env.PROD 
+  ? 'https://ideaflow-backend.onrender.com' // <-- PASTE YOUR RENDER URL HERE
+  : 'http://localhost:4000';
+
 function App() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -114,7 +119,7 @@ function App() {
 
     socket.emit("join-session", currentSessionId);
 
-    fetch(`http://localhost:4000/api/session/${currentSessionId}`)
+    fetch(`${API_URL}/api/session/${currentSessionId}`)
       .then((res) => res.json())
       .then((data) => {
         setNodes(data.nodes || []);
@@ -197,6 +202,7 @@ function App() {
   const handleStyleUpdate = (nodeId, property, value) => {
     if (property === "delete") {
       deleteNode(nodeId);
+      setStylePanelNode(null);
       return;
     }
 
@@ -206,7 +212,6 @@ function App() {
     setNodes(updated);
     syncToServer(updated, connections);
     
-    // Update panel preview
     const updatedNode = updated.find((n) => n.id === nodeId);
     if (updatedNode) {
       setStylePanelNode(updatedNode);
@@ -336,6 +341,7 @@ function App() {
   const handleConnectionClick = (connectionId) => {
     setSelectedConnection(connectionId);
     setSelectedNode(null);
+    setStylePanelNode(null);
   };
 
   // Handle node selection
@@ -347,7 +353,6 @@ function App() {
     } else {
       setSelectedNode(nodeId);
       setSelectedConnection(null);
-      // Open style panel
       const node = nodes.find((n) => n.id === nodeId);
       if (node) {
         setStylePanelNode(node);
@@ -360,9 +365,8 @@ function App() {
     if (!isPanning) {
       setSelectedNode(null);
       setSelectedConnection(null);
-      if (connectingFrom) {
-        setConnectingFrom(null);
-      }
+      setConnectingFrom(null);
+      setStylePanelNode(null);
     }
   };
 
@@ -426,6 +430,15 @@ function App() {
         onResetView={resetView}
       />
 
+      {/* Style Panel */}
+      {stylePanelNode && (
+        <StylePanel
+          node={stylePanelNode}
+          onClose={() => setStylePanelNode(null)}
+          onUpdate={handleStyleUpdate}
+        />
+      )}
+
       <div 
         className="board" 
         ref={boardRef} 
@@ -451,10 +464,10 @@ function App() {
               const toNode = nodes.find((n) => n.id === conn.to);
               if (!fromNode || !toNode) return null;
 
-              const fromX = fromNode.x + 75;
-              const fromY = fromNode.y + 40;
-              const toX = toNode.x + 75;
-              const toY = toNode.y + 40;
+              const fromX = fromNode.x + fromNode.width / 2;
+              const fromY = fromNode.y + fromNode.height / 2;
+              const toX = toNode.x + toNode.width / 2;
+              const toY = toNode.y + toNode.height / 2;
 
               return (
                 <Connection
@@ -497,56 +510,29 @@ function App() {
           <button onClick={resetView} title="Reset View">⟲</button>
         </div>
 
-        {/* Connection hint */}
+        {/* Hints */}
         {connectingFrom && (
           <div className="connect-hint">
             🔗 Click another node to create a connection
-            <br />
-            <small>Press ESC or click the board to cancel</small>
           </div>
         )}
-
-        {/* Selection hint */}
-        {selectedNode && !connectingFrom && !stylePanelNode && (
+        {selectedNode && !stylePanelNode && (
           <div className="selection-hint">
-            ✨ Node selected! Double-click to edit text
-            <br />
-            <small>Style panel opened • Press ESC to close</small>
+            ✨ Node selected! Click again to open style panel.
           </div>
         )}
-
-        {/* Connection selection hint */}
         {selectedConnection && (
           <div className="selection-hint">
-            🔗 Connection selected! Click ➕ to add labels
-            <br />
-            <small>Double-click labels to edit • Drag to move • Click ✕ to delete</small>
+            🔗 Connection selected! Click ➕ to add labels.
           </div>
         )}
-
-        {/* Welcome hint */}
         {nodes.length === 0 && (
           <div className="welcome-hint">
             <h2>👋 Welcome to IdeaFlow!</h2>
             <p>Click "Add Node" to start your mind map</p>
-            <div className="quick-tips">
-              <div className="tip">🖱️ Drag to move nodes</div>
-              <div className="tip">🎯 Click to select & customize</div>
-              <div className="tip">✏️ Double-click to edit</div>
-              <div className="tip">🔗 Select → Connect → Click target</div>
-              <div className="tip">🔍 Ctrl+Scroll to zoom</div>
-              <div className="tip">✋ Drag background to pan</div>
-            </div>
           </div>
         )}
       </div>
-
-      {/* Style Panel */}
-      <StylePanel
-        node={stylePanelNode}
-        onClose={() => setStylePanelNode(null)}
-        onUpdate={handleStyleUpdate}
-      />
     </div>
   );
 }
