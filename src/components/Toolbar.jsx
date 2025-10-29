@@ -8,10 +8,6 @@ const Toolbar = ({
   connectMode,
   sessionId,
   onNewSession,
-  zoom,
-  onZoomIn,
-  onZoomOut,
-  onResetView,
 }) => {
   const [showShare, setShowShare] = useState(false);
 
@@ -19,6 +15,11 @@ const Toolbar = ({
     const link = `${window.location.origin}/session/${sessionId}`;
     navigator.clipboard.writeText(link);
     alert("Link copied! Share it with collaborators.");
+  };
+
+  const copySessionId = () => {
+    navigator.clipboard.writeText(sessionId);
+    alert("Session ID copied to clipboard!");
   };
 
   return (
@@ -37,25 +38,31 @@ const Toolbar = ({
           🔗 {connectMode ? "Cancel" : "Connect"}
         </button>
         
-        {/* Zoom controls in toolbar */}
-        <div className="toolbar-zoom">
-          <button onClick={onZoomOut} title="Zoom Out">🔍−</button>
-          <span className="zoom-level">{Math.round(zoom * 100)}%</span>
-          <button onClick={onZoomIn} title="Zoom In">🔍+</button>
-          <button onClick={onResetView} title="Reset View">⟲</button>
-        </div>
+        {/* REMOVED: Zoom controls (now only in floating panel) */}
 
         <button onClick={onExportJSON}>💾 JSON</button>
         <button onClick={onExportImage}>📸 Image</button>
       </div>
 
       <div className="toolbar-right">
+        {/* ADDED: Permanent session ID display */}
+        <div 
+          className="session-id-display" 
+          onClick={copySessionId}
+          title="Click to copy session ID"
+        >
+          <span>Session: {sessionId.substring(0, 8)}</span>
+          <span className="copy-icon">📋</span>
+        </div>
+        
         <button onClick={() => setShowShare(!showShare)}>📤 Share</button>
+        
         {showShare && (
           <div className="share-popup">
             <p>
-              Session ID: <code>{sessionId}</code>
+              <strong>Session ID:</strong>
             </p>
+            <code>{sessionId}</code>
             <button onClick={copyLink}>Copy Link</button>
           </div>
         )}

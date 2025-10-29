@@ -14,8 +14,6 @@ const Connection = ({
   onDeleteLabel
 }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const [editingLabelId, setEditingLabelId] = useState(null);
-  const [editText, setEditText] = useState("");
 
   // Curve calculation
   const dx = to.x - from.x;
@@ -56,7 +54,6 @@ const Connection = ({
   const handleAddLabel = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log('Adding label to connection:', id);
     onAddLabel(id);
   };
 
@@ -112,8 +109,6 @@ const Connection = ({
         />
       )}
 
-      {/* HORIZONTAL BUTTON LAYOUT */}
-      
       {/* Add label button - LEFT SIDE */}
       {selected && (
         <g 
@@ -180,7 +175,7 @@ const Connection = ({
         </g>
       )}
 
-      {/* Render all labels BELOW */}
+      {/* Render all labels */}
       {labels.map((label, index) => (
         <Label
           key={label.id}
@@ -188,26 +183,9 @@ const Connection = ({
           dotX={dotX}
           dotY={dotY}
           index={index}
-          isEditing={editingLabelId === label.id}
-          editText={editText}
-          setEditText={setEditText}
-          onStartEdit={(labelId, text) => {
-            console.log('Start editing label:', labelId);
-            setEditingLabelId(labelId);
-            setEditText(text);
-          }}
-          onFinishEdit={(labelId, newText) => {
-            console.log('Finish editing label:', labelId, newText);
-            onUpdateLabel(id, labelId, newText);
-            setEditingLabelId(null);
-          }}
-          onUpdatePosition={(labelId, offsetX, offsetY) => {
-            console.log('Update label position:', labelId, offsetX, offsetY);
-            onUpdateLabelPosition(id, labelId, offsetX, offsetY);
-          }}
-          onDelete={(labelId) => {
-            onDeleteLabel(id, labelId);
-          }}
+          onUpdateLabel={(newText) => onUpdateLabel(id, label.id, newText)}
+          onUpdatePosition={(offsetX, offsetY) => onUpdateLabelPosition(id, label.id, offsetX, offsetY)}
+          onDelete={() => onDeleteLabel(id, label.id)}
           onMouseEnter={() => setIsHovered(true)}
         />
       ))}
@@ -240,39 +218,33 @@ const Connection = ({
   );
 };
 
-// Individual Label Component
+// FIXED: Individual Label Component with cleanup
 const Label = ({ 
   label, 
   dotX, 
   dotY, 
   index,
-  isEditing,
-  editText,
-  setEditText,
-  onStartEdit,
-  onFinishEdit,
+  onUpdateLabel,
   onUpdatePosition,
   onDelete,
   onMouseEnter
 }) => {
   const [isDragging, setIsDragging] = useState(false);
+  const [isEditing, setIsEditing] = useState(!label.text);
+  const [editText, setEditText] = useState(label.text);
 
-  // Label position - BELOW the dot
   const labelX = dotX + (label.offsetX || 0);
-  const labelY = dotY + 40 + (label.offsetY || 0); // Start 40px below dot
+  const labelY = dotY + 40 + (label.offsetY || 0);
 
-  // Cleanup on unmount
   useEffect(() => {
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, []);
+    if (!label.text) {
+      setIsEditing(true);
+    }
+  }, [label.text]);
 
   const handleMouseDown = (e) => {
     if (isEditing) return;
     
-    console.log('Label mousedown started:', label.id);
     e.preventDefault();
     e.stopPropagation();
     
@@ -284,15 +256,13 @@ const Label = ({
     const startOffsetY = label.offsetY || 0;
 
     const handleMouseMove = (moveEvent) => {
-      console.log('Dragging label...');
       const deltaX = moveEvent.clientX - startX;
       const deltaY = moveEvent.clientY - startY;
       
-      onUpdatePosition(label.id, startOffsetX + deltaX, startOffsetY + deltaY);
+      onUpdatePosition(startOffsetX + deltaX, startOffsetY + deltaY);
     };
 
     const handleMouseUp = () => {
-      console.log('Label mouseup - drag ended');
       setIsDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
@@ -302,38 +272,35 @@ const Label = ({
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const handleMouseMove = () => {}; // Placeholder for cleanup
-  const handleMouseUp = () => {}; // Placeholder for cleanup
-
   const handleDoubleClick = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log('Label double-clicked:', label.id);
-    onStartEdit(label.id, label.text);
+    setIsEditing(true);
+    setEditText(label.text);
   };
 
   const handleBlur = () => {
-    onFinishEdit(label.id, editText);
+    setIsEditing(false);
+    onUpdateLabel(editText);
   };
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      onFinishEdit(label.id, editText);
+      handleBlur();
     } else if (e.key === "Escape") {
       e.preventDefault();
       setEditText(label.text);
-      onFinishEdit(label.id, label.text);
+      setIsEditing(false);
     }
   };
 
   const handleDeleteLabel = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    onDelete(label.id);
+    onDelete();
   };
 
-  // Auto-edit empty labels
   if (isEditing) {
     return (
       <foreignObject
@@ -380,8 +347,6 @@ const Label = ({
   }
 
   if (!label.text) {
-    // Empty label - auto-edit
-    setTimeout(() => onStartEdit(label.id, ""), 0);
     return null;
   }
 
@@ -389,10 +354,7 @@ const Label = ({
   const boxWidth = Math.max(textLength * 8 + 40, 80);
 
   return (
-    <g
-      onMouseEnter={onMouseEnter}
-    >
-      {/* Draggable label background */}
+    <g onMouseEnter={onMouseEnter}>
       <rect
         x={labelX - boxWidth / 2}
         y={labelY - 12}
@@ -414,7 +376,6 @@ const Label = ({
         }}
       />
       
-      {/* Label text */}
       <text
         x={labelX}
         y={labelY + 4}
@@ -431,11 +392,7 @@ const Label = ({
         {label.text}
       </text>
       
-      {/* Delete button for label */}
-      <g 
-        onClick={handleDeleteLabel}
-        style={{ cursor: 'pointer' }}
-      >
+      <g onClick={handleDeleteLabel} style={{ cursor: 'pointer' }}>
         <circle
           cx={labelX + boxWidth / 2 - 10}
           cy={labelY}

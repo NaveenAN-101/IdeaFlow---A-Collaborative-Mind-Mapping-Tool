@@ -47,13 +47,16 @@ const Node = ({
     large: "18px",
   };
 
-  // Get shape-specific styles
-  // Find and replace this function in Node.jsx
-
-  // Get shape-specific styles
-  const getShapeStyles = () => {
+  // FIXED: Get border color and width for all shapes
+  const getBorderInfo = () => {
     const borderWidth = selected ? "3px" : connecting ? "3px" : "2px";
     const borderColor = selected ? "#000" : connecting ? "#FFD700" : "#fff";
+    return { borderWidth, borderColor };
+  };
+
+  // FIXED: Get shape-specific styles with proper border handling
+  const getShapeStyles = () => {
+    const { borderWidth, borderColor } = getBorderInfo();
     const baseShadow = connecting
       ? "0 0 20px rgba(255, 215, 0, 0.8)"
       : selected
@@ -75,9 +78,9 @@ const Node = ({
       alignItems: "center",
       justifyContent: "center",
       textAlign: "center",
-      cursor: dragStateRef.current.hasMoved ? "grabbing" : "grab",
+      cursor: dragStateRef.current.isDragging ? "grabbing" : "grab",
       transition: dragStateRef.current.isDragging ? "none" : "all 0.2s ease",
-      zIndex: dragStateRef.current.isDragging ? 1000 : selected ? 100 : 10,
+      zIndex: dragStateRef.current.isDragging ? 1000 : selected ? 300 : 200,
     };
 
     switch (shape) {
@@ -94,7 +97,6 @@ const Node = ({
 
       case "diamond":
         const diamondSize = Math.max(currentSize.width, currentSize.height);
-        const pulseScale = selected ? 1.08 : 1; // Apply scale on selection
         return {
           ...baseStyles,
           width: diamondSize,
@@ -102,26 +104,32 @@ const Node = ({
           borderRadius: "8px",
           border: `${borderWidth} ${borderStyle} ${borderColor}`,
           boxShadow: baseShadow,
-          transform: `rotate(45deg) scale(${pulseScale})`, // COMBINE transforms
+          transform: "rotate(45deg)",
         };
 
       case "hexagon":
+        // FIXED: Use drop-shadow for border effect on clipped shapes
+        const hexBorderSize = parseInt(borderWidth);
+        const hexBorderColor = borderColor;
         return {
           ...baseStyles,
           clipPath: "polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%)",
           border: "none",
-          filter: `drop-shadow(0 4px 8px rgba(0,0,0,0.2))`,
+          filter: `drop-shadow(0 0 0 ${hexBorderSize}px ${hexBorderColor}) drop-shadow(0 4px 8px rgba(0,0,0,0.2))`,
         };
 
       case "star":
+        // FIXED: Use drop-shadow for border effect on clipped shapes
         const starSize = Math.max(currentSize.width, currentSize.height) * 1.2;
+        const starBorderSize = parseInt(borderWidth);
+        const starBorderColor = borderColor;
         return {
           ...baseStyles,
           width: starSize,
           height: starSize,
           clipPath: "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)",
           border: "none",
-          filter: `drop-shadow(0 4px 8px rgba(0,0,0,0.2))`,
+          filter: `drop-shadow(0 0 0 ${starBorderSize}px ${starBorderColor}) drop-shadow(0 4px 8px rgba(0,0,0,0.2))`,
         };
 
       case "cloud":
@@ -283,7 +291,9 @@ const Node = ({
 
       <div
         style={{
-          transform: shape === "diamond" ? "rotate(-45deg)" : "none",
+          transform: shape === "diamond" 
+            ? `rotate(-45deg) scale(${selected ? 1.08 : 1})` 
+            : "none",
           width: "100%",
           height: "100%",
           display: "flex",
@@ -292,6 +302,7 @@ const Node = ({
           padding: "10px",
           zIndex: 1,
           position: "relative",
+          transition: "transform 0.2s ease",
         }}
       >
         {editing ? (
@@ -317,7 +328,14 @@ const Node = ({
             onMouseDown={(e) => e.stopPropagation()}
           />
         ) : (
-          <span style={{ pointerEvents: "none", wordBreak: "break-word" }}>
+          <span 
+            style={{ 
+              pointerEvents: "none", 
+              wordBreak: "break-word",
+              textShadow: "0 1px 3px rgba(0,0,0,0.3)",
+              fontWeight: "600"
+            }}
+          >
             {content}
           </span>
         )}

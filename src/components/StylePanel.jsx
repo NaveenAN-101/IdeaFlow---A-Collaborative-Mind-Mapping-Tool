@@ -1,5 +1,3 @@
-// src/components/StylePanel.jsx
-
 import React from "react";
 
 const StylePanel = ({ node, onClose, onUpdate }) => {
@@ -11,20 +9,20 @@ const StylePanel = ({ node, onClose, onUpdate }) => {
   const borderStyles = ["solid", "dashed", "dotted"];
   const fontSizes = ["small", "medium", "large"];
 
+  // ADDED: Check if current shape supports borders
+  const shapeSupportsCustomBorders = !["star", "hexagon"].includes(node.shape);
+
   const handleChange = (property, value) => {
     onUpdate(node.id, property, value);
   };
 
   return (
     <div className="style-panel-horizontal">
-      {/* Moved close button outside the inner flex container */}
       <button className="panel-close-btn" onClick={onClose} title="Close (ESC)">
         ✕
       </button>
 
       <div className="style-panel-inner">
-        {/* All sections are now inside this flex container */}
-        
         {/* Color */}
         <div className="panel-section">
           <div className="section-title">🎨 Color</div>
@@ -79,24 +77,26 @@ const StylePanel = ({ node, onClose, onUpdate }) => {
           </div>
         </div>
 
-        {/* Border */}
-        <div className="panel-section">
-          <div className="section-title">━ Border</div>
-          <div className="panel-options-row">
-            {borderStyles.map((bs) => (
-              <button
-                key={bs}
-                className={`panel-btn ${node.borderStyle === bs ? "active" : ""}`}
-                onClick={() => handleChange("borderStyle", bs)}
-                title={bs}
-              >
-                {bs === "solid" && "━"}
-                {bs === "dashed" && "╍"}
-                {bs === "dotted" && "┅"}
-              </button>
-            ))}
+        {/* Border - CONDITIONALLY RENDERED */}
+        {shapeSupportsCustomBorders && (
+          <div className="panel-section">
+            <div className="section-title">━ Border</div>
+            <div className="panel-options-row">
+              {borderStyles.map((bs) => (
+                <button
+                  key={bs}
+                  className={`panel-btn ${node.borderStyle === bs ? "active" : ""}`}
+                  onClick={() => handleChange("borderStyle", bs)}
+                  title={bs}
+                >
+                  {bs === "solid" && "━"}
+                  {bs === "dashed" && "╍"}
+                  {bs === "dotted" && "┅"}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Font */}
         <div className="panel-section">
