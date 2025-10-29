@@ -2,7 +2,7 @@ import express from "express";
 import http from "http";
 import { Server } from "socket.io";
 import cors from "cors";
-import mongoose from "mongoose";
+// import mongoose from "mongoose"; // <-- REMOVED/COMMENTED OUT
 
 const app = express();
 const server = http.createServer(app);
@@ -16,23 +16,16 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection (Optional - uncomment when ready)
-// mongoose.connect('mongodb://localhost:27017/ideaflow', {
-//   useNewUrlParser: true,
-//   useUnifiedTopology: true
+// // Session Schema (for persistence) - COMMENTED OUT
+// const sessionSchema = new mongoose.Schema({
+//   sessionId: { type: String, unique: true, required: true },
+//   nodes: { type: Array, default: [] },
+//   connections: { type: Array, default: [] },
+//   lastUpdated: { type: Date, default: Date.now },
 // });
+// const Session = mongoose.model("Session", sessionSchema);
 
-// Session Schema (for persistence)
-const sessionSchema = new mongoose.Schema({
-  sessionId: { type: String, unique: true, required: true },
-  nodes: { type: Array, default: [] },
-  connections: { type: Array, default: [] },
-  lastUpdated: { type: Date, default: Date.now },
-});
-
-const Session = mongoose.model("Session", sessionSchema);
-
-// In-memory storage (if DB not connected)
+// In-memory storage (this is now the only storage method)
 let sessions = {};
 
 // REST API: Get session data
@@ -40,15 +33,15 @@ app.get("/api/session/:id", async (req, res) => {
   const { id } = req.params;
   
   try {
-    // Try MongoDB first
-    if (mongoose.connection.readyState === 1) {
-      let session = await Session.findOne({ sessionId: id });
-      if (!session) {
-        session = new Session({ sessionId: id, nodes: [], connections: [] });
-        await session.save();
-      }
-      return res.json(session);
-    }
+    // // Try MongoDB first - COMMENTED OUT
+    // if (mongoose.connection.readyState === 1) {
+    //   let session = await Session.findOne({ sessionId: id });
+    //   if (!session) {
+    //     session = new Session({ sessionId: id, nodes: [], connections: [] });
+    //     await session.save();
+    //   }
+    //   return res.json(session);
+    // }
     
     // Fallback to in-memory
     if (!sessions[id]) {
@@ -66,15 +59,19 @@ app.post("/api/session/:id", async (req, res) => {
   const { nodes, connections } = req.body;
 
   try {
-    if (mongoose.connection.readyState === 1) {
-      await Session.findOneAndUpdate(
-        { sessionId: id },
-        { nodes, connections, lastUpdated: Date.now() },
-        { upsert: true, new: true }
-      );
-    } else {
-      sessions[id] = { nodes, connections };
-    }
+    // // Try MongoDB first - COMMENTED OUT
+    // if (mongoose.connection.readyState === 1) {
+    //   await Session.findOneAndUpdate(
+    //     { sessionId: id },
+    //     { nodes, connections, lastUpdated: Date.now() },
+    //     { upsert: true, new: true }
+    //   );
+    // } else {
+    //   sessions[id] = { nodes, connections };
+    // }
+    
+    // Simplified to only use in-memory storage
+    sessions[id] = { nodes, connections };
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: "Failed to save session" });
@@ -89,14 +86,16 @@ io.on("connection", (socket) => {
     socket.join(sessionId);
     console.log(`User ${socket.id} joined session: ${sessionId}`);
     
-    // Send current session state
-    let sessionData;
-    if (mongoose.connection.readyState === 1) {
-      sessionData = await Session.findOne({ sessionId });
-    } else {
-      sessionData = sessions[sessionId];
-    }
+    // // Try MongoDB first - COMMENTED OUT
+    // let sessionData;
+    // if (mongoose.connection.readyState === 1) {
+    //   sessionData = await Session.findOne({ sessionId });
+    // } else {
+    //   sessionData = sessions[sessionId];
+    // }
     
+    // Simplified to only use in-memory storage
+    const sessionData = sessions[sessionId];
     if (sessionData) {
       socket.emit("session-data", sessionData);
     }
@@ -105,16 +104,19 @@ io.on("connection", (socket) => {
   socket.on("update-board", async (data) => {
     const { sessionId, nodes, connections } = data;
     
-    // Update storage
-    if (mongoose.connection.readyState === 1) {
-      await Session.findOneAndUpdate(
-        { sessionId },
-        { nodes, connections, lastUpdated: Date.now() },
-        { upsert: true }
-      );
-    } else {
-      sessions[sessionId] = { nodes, connections };
-    }
+    // // Try MongoDB first - COMMENTED OUT
+    // if (mongoose.connection.readyState === 1) {
+    //   await Session.findOneAndUpdate(
+    //     { sessionId },
+    //     { nodes, connections, lastUpdated: Date.now() },
+    //     { upsert: true }
+    //   );
+    // } else {
+    //   sessions[sessionId] = { nodes, connections };
+    // }
+
+    // Simplified to only use in-memory storage
+    sessions[sessionId] = { nodes, connections };
     
     // Broadcast to others in the session
     socket.to(sessionId).emit("board-updated", { nodes, connections });
