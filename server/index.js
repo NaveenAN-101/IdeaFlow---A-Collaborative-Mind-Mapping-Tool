@@ -4,8 +4,6 @@ import { Server } from "socket.io";
 import cors from "cors";
 import pkg from "pg";
 const { Pool } = pkg;
-import dotenv from 'dotenv';
-dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
