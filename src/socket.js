@@ -1,21 +1,66 @@
-import { io } from "socket.io-client";
+import { io } from 'socket.io-client';
 
-// This logic automatically switches between your local server and your live server.
-// - In development (`npm run dev`), it uses localhost:4000.
-// - In production (after deploying to Vercel), it uses your live Render URL.
+const SOCKET_URL = import.meta.env.PROD
+  ? 'https://ideaflow-backend.onrender.com'
+  : 'http://localhost:4000';
 
-const SOCKET_URL = import.meta.env.PROD 
-  ? 'https://ideaflow-backend.onrender.com'  // <-- PASTE YOUR RENDER.COM URL HERE
-  : 'http://localhost:4000';                 // <-- Your local server port (already correct)
+console.log('🔍 Socket URL:', SOCKET_URL);
+console.log('🔍 Environment:', import.meta.env.MODE);
 
-console.log('Connecting to WebSocket server at:', SOCKET_URL);
-
-export const socket = io(SOCKET_URL, {
-  // Use both transports as a fallback for networks that might block WebSockets
-  transports: ['websocket', 'polling'], 
+const socket = io(SOCKET_URL, {
+  transports: ['websocket', 'polling'],
   reconnection: true,
   reconnectionAttempts: 5,
   reconnectionDelay: 1000,
+  timeout: 20000,
+  autoConnect: true
+});
+
+// Connection events
+socket.on('connect', () => {
+  console.log('✅ Socket connected! ID:', socket.id);
+  console.log('✅ Transport:', socket.io.engine.transport.name);
+});
+
+socket.on('connect_error', (error) => {
+  console.error('❌ Socket connection error:', error.message);
+  console.error('❌ Error details:', error);
+});
+
+socket.on('disconnect', (reason) => {
+  console.log('⚠️ Socket disconnected. Reason:', reason);
+  if (reason === 'io server disconnect') {
+    socket.connect();
+  }
+});
+
+socket.on('reconnect_attempt', (attemptNumber) => {
+  console.log('🔄 Reconnection attempt #' + attemptNumber);
+});
+
+socket.on('reconnect', (attemptNumber) => {
+  console.log('✅ Reconnected after', attemptNumber, 'attempts');
+});
+
+socket.on('reconnect_failed', () => {
+  console.error('❌ Reconnection failed after all attempts');
+});
+
+socket.on('error', (error) => {
+  console.error('❌ Socket error:', error);
+});
+
+// Data events
+socket.on('welcome', (data) => {
+  console.log('👋 Welcome message:', data);
+});
+
+socket.on('session-data', (data) => {
+  console.log('📥 Received session data:', data);
+});
+
+socket.on('board-updated', (data) => {
+  console.log('📥 Board updated:', data);
 });
 
 export default socket;

@@ -11,6 +11,9 @@ const API_URL = import.meta.env.PROD
   ? 'https://ideaflow-backend.onrender.com'
   : 'http://localhost:4000';
 
+console.log('🔍 API_URL:', API_URL);
+console.log('🔍 Environment:', import.meta.env.MODE);
+
 function App() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -20,6 +23,8 @@ function App() {
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [connectingFrom, setConnectingFrom] = useState(null);
   const [stylePanelNode, setStylePanelNode] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -32,6 +37,7 @@ function App() {
 
   const createNewSession = () => {
     const newId = Math.random().toString(36).substr(2, 9);
+    console.log('🆕 Creating new session:', newId);
     navigate(`/session/${newId}`);
   };
 
@@ -104,28 +110,58 @@ function App() {
 
   useEffect(() => {
     if (!sessionId) {
+      console.log('⚠️ No session ID, creating new session');
       createNewSession();
       return;
     }
+
+    console.log('📡 Loading session:', currentSessionId);
+    setLoading(true);
+    setError(null);
+
+    // Join socket room
     socket.emit("join-session", currentSessionId);
+
+    // Fetch initial session data
     fetch(`${API_URL}/api/session/${currentSessionId}`)
-      .then((res) => res.json())
+      .then((res) => {
+        console.log('📡 Response status:', res.status);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        return res.json();
+      })
       .then((data) => {
+        console.log('✅ Session data loaded:', data);
         setNodes(data.nodes || []);
         setConnections(data.connections || []);
+        setLoading(false);
       })
-      .catch((err) => console.error("Error loading session:", err));
-    socket.on("session-data", (data) => {
+      .catch((err) => {
+        console.error("❌ Error loading session:", err);
+        setError(`Failed to load session: ${err.message}`);
+        setLoading(false);
+      });
+
+    // Socket event listeners
+    const handleSessionData = (data) => {
+      console.log('📥 Socket: session-data received', data);
       setNodes(data.nodes || []);
       setConnections(data.connections || []);
-    });
-    socket.on("board-updated", (data) => {
+    };
+
+    const handleBoardUpdated = (data) => {
+      console.log('📥 Socket: board-updated received', data);
       setNodes(data.nodes || []);
       setConnections(data.connections || []);
-    });
+    };
+
+    socket.on("session-data", handleSessionData);
+    socket.on("board-updated", handleBoardUpdated);
+
     return () => {
-      socket.off("session-data");
-      socket.off("board-updated");
+      socket.off("session-data", handleSessionData);
+      socket.off("board-updated", handleBoardUpdated);
     };
   }, [sessionId]);
 
@@ -133,6 +169,7 @@ function App() {
   const syncToServer = (updatedNodes, updatedConnections) => {
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     syncTimeoutRef.current = setTimeout(() => {
+      console.log('📤 Syncing to server:', currentSessionId);
       socket.emit("update-board", {
         sessionId: currentSessionId,
         nodes: updatedNodes,
@@ -308,7 +345,6 @@ function App() {
     }
   };
 
-  // FIXED: Helper function to calculate connection point based on node shape
   const getNodeConnectionPoint = (node) => {
     const sizes = { 
       small: { width: 120, height: 60 }, 
@@ -317,17 +353,14 @@ function App() {
     };
     const nodeSize = sizes[node.size || 'medium'];
 
-    // For star shape, reduce the connection point to visual center
     if (node.shape === 'star') {
       const starSize = Math.max(nodeSize.width, nodeSize.height) * 1.2;
-      // Connection point at 70% of radius to avoid extending beyond star points
       return {
         x: node.x + starSize / 2,
         y: node.y + starSize / 2
       };
     }
 
-    // For hexagon, use center
     if (node.shape === 'hexagon') {
       return {
         x: node.x + nodeSize.width / 2,
@@ -335,7 +368,6 @@ function App() {
       };
     }
 
-    // For circle, use center
     if (node.shape === 'circle') {
       const circleSize = Math.max(nodeSize.width, nodeSize.height);
       return {
@@ -344,7 +376,6 @@ function App() {
       };
     }
 
-    // For diamond, use center
     if (node.shape === 'diamond') {
       const diamondSize = Math.max(nodeSize.width, nodeSize.height);
       return {
@@ -353,7 +384,6 @@ function App() {
       };
     }
 
-    // Default for rectangle and cloud
     return {
       x: node.x + nodeSize.width / 2,
       y: node.y + nodeSize.height / 2
@@ -397,14 +427,12 @@ function App() {
             transformOrigin: '0 0' 
           }}
         >
-          {/* FIXED: Render connections first (lower z-index) */}
           <svg className="connections-layer">
             {connections.map((conn) => {
               const fromNode = nodes.find((n) => n.id === conn.from);
               const toNode = nodes.find((n) => n.id === conn.to);
               if (!fromNode || !toNode) return null;
               
-              // FIXED: Use improved connection point calculation
               const fromPoint = getNodeConnectionPoint(fromNode);
               const toPoint = getNodeConnectionPoint(toNode);
 
@@ -427,7 +455,6 @@ function App() {
             })}
           </svg>
 
-          {/* FIXED: Render nodes after connections (higher z-index) */}
           {nodes.map((node) => (
             <Node 
               key={node.id} 
@@ -448,6 +475,21 @@ function App() {
           <button onClick={resetView} title="Reset View">⟲</button>
         </div>
 
+        {loading && (
+          <div className="welcome-hint">
+            <h2>⏳ Loading Session...</h2>
+            <p>Please wait while we fetch your data</p>
+          </div>
+        )}
+
+        {error && (
+          <div className="welcome-hint" style={{ background: 'rgba(220, 53, 69, 0.1)' }}>
+            <h2>❌ Error</h2>
+            <p>{error}</p>
+            <button onClick={() => window.location.reload()}>Reload Page</button>
+          </div>
+        )}
+
         {connectingFrom && (
           <div className="connect-hint">
             Click another node to create a connection
@@ -466,7 +508,7 @@ function App() {
           </div>
         )}
         
-        {nodes.length === 0 && (
+        {nodes.length === 0 && !loading && !error && (
           <div className="welcome-hint">
             <h2>👋 Welcome to IdeaFlow!</h2>
             <p>Click "Add Node" to start your mind map</p>
