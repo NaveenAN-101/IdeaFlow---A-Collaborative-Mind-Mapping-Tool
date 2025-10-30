@@ -17,6 +17,18 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// ========== DEBUG: Check DATABASE_URL ==========
+console.log('🔍 Checking DATABASE_URL...');
+console.log('DATABASE_URL exists:', !!process.env.DATABASE_URL);
+if (process.env.DATABASE_URL) {
+  console.log('DATABASE_URL starts with:', process.env.DATABASE_URL.substring(0, 30) + '...');
+  console.log('DATABASE_URL has password placeholder:', process.env.DATABASE_URL.includes('[YOUR_PASSWORD]'));
+  console.log('DATABASE_URL length:', process.env.DATABASE_URL.length);
+} else {
+  console.log('❌ DATABASE_URL is not set in environment variables!');
+}
+console.log('====================================');
+
 // ========== SUPABASE POSTGRESQL CONNECTION ==========
 
 const pool = new Pool({
@@ -30,6 +42,7 @@ const pool = new Pool({
 pool.query('SELECT NOW()', (err, res) => {
   if (err) {
     console.error('❌ Database connection error:', err.message);
+    console.error('Full error:', err);
     console.log('⚠️  Falling back to in-memory storage');
   } else {
     console.log('✅ Connected to Supabase PostgreSQL');
@@ -56,7 +69,7 @@ async function getSessionFromDB(sessionId) {
       };
     }
 
-    return null; // Session doesn't exist yet
+    return null;
   } catch (error) {
     console.error('Error fetching session from DB:', error.message);
     return null;
@@ -119,21 +132,18 @@ app.get("/api/session/:id", async (req, res) => {
   const { id } = req.params;
   
   try {
-    // Try to get from database
     let sessionData = await getSessionFromDB(id);
     
     if (sessionData) {
       return res.json({ sessionId: id, ...sessionData });
     }
 
-    // If not in DB, return empty session
     const emptySession = { nodes: [], connections: [] };
     res.json({ sessionId: id, ...emptySession });
     
   } catch (error) {
     console.error('Error in GET /api/session:', error);
     
-    // Fallback to in-memory
     if (!sessions[id]) {
       sessions[id] = { nodes: [], connections: [] };
     }
@@ -147,33 +157,29 @@ app.post("/api/session/:id", async (req, res) => {
   const { nodes, connections } = req.body;
 
   try {
-    // Try to save to database
     const saved = await saveSessionToDB(id, nodes, connections);
     
     if (saved) {
       return res.json({ success: true, storage: 'database' });
     }
 
-    // Fallback to in-memory
     sessions[id] = { nodes, connections };
     res.json({ success: true, storage: 'memory' });
     
   } catch (error) {
     console.error('Error in POST /api/session:', error);
-    
-    // Fallback to in-memory
     sessions[id] = { nodes, connections };
     res.json({ success: true, storage: 'memory' });
   }
 });
 
-// Delete session (optional)
+// Delete session
 app.delete("/api/session/:id", async (req, res) => {
   const { id } = req.params;
   
   try {
     await pool.query('DELETE FROM sessions WHERE session_id = $1', [id]);
-    delete sessions[id]; // Also remove from memory
+    delete sessions[id];
     res.json({ success: true, message: 'Session deleted' });
   } catch (error) {
     console.error('Error deleting session:', error);
@@ -181,7 +187,7 @@ app.delete("/api/session/:id", async (req, res) => {
   }
 });
 
-// List all sessions (for debugging)
+// List all sessions
 app.get("/api/sessions", async (req, res) => {
   try {
     const result = await pool.query(
@@ -218,11 +224,9 @@ io.on("connection", (socket) => {
     console.log(`👤 User ${socket.id} joined session: ${sessionId}`);
     
     try {
-      // Try to get from database
       let sessionData = await getSessionFromDB(sessionId);
       
       if (!sessionData) {
-        // Session doesn't exist, return empty
         sessionData = { nodes: [], connections: [] };
       }
       
@@ -230,8 +234,6 @@ io.on("connection", (socket) => {
       
     } catch (error) {
       console.error('Error loading session:', error);
-      
-      // Fallback to in-memory
       const sessionData = sessions[sessionId] || { nodes: [], connections: [] };
       socket.emit("session-data", sessionData);
     }
@@ -241,15 +243,12 @@ io.on("connection", (socket) => {
     const { sessionId, nodes, connections } = data;
     
     try {
-      // Try to save to database
       await saveSessionToDB(sessionId, nodes, connections);
     } catch (error) {
       console.error('Error saving to DB, using memory:', error.message);
-      // Fallback to in-memory
       sessions[sessionId] = { nodes, connections };
     }
     
-    // Broadcast to all clients in the session (including sender)
     io.to(sessionId).emit("board-updated", { nodes, connections });
   });
 
