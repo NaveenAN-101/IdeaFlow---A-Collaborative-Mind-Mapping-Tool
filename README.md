@@ -1,8 +1,3 @@
-Perfect 👌 Thanks, Naveen AN.
-Here’s your **final, professional, portfolio-grade `README.md`** rewritten from scratch — clean, modern, and 100% ready to drop into your repo.
-
----
-
 ```markdown
 # 🧠 IdeaFlow — Real-Time Collaborative Mind Mapping
 
