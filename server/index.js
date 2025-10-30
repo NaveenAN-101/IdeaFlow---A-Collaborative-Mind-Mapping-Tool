@@ -35,18 +35,31 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
-  }
+  },
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
 });
 
 // Test database connection on startup
-pool.query('SELECT NOW()', (err, res) => {
+pool.connect((err, client, release) => {
   if (err) {
     console.error('❌ Database connection error:', err.message);
+    console.error('❌ Error code:', err.code);
+    console.error('❌ Host:', err.address || 'unknown');
+    console.error('❌ Port:', err.port || 'unknown');
     console.error('Full error:', err);
     console.log('⚠️  Falling back to in-memory storage');
   } else {
-    console.log('✅ Connected to Supabase PostgreSQL');
-    console.log('📅 Server time:', res.rows[0].now);
+    console.log('✅ Successfully connected to Supabase PostgreSQL');
+    client.query('SELECT NOW()', (err, res) => {
+      release();
+      if (err) {
+        console.error('❌ Query error:', err);
+      } else {
+        console.log('✅ Database is responsive');
+        console.log('📅 Server time:', res.rows[0].now);
+      }
+    });
   }
 });
 
